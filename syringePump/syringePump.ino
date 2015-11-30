@@ -9,7 +9,7 @@
 // Send a "-" to pull that size bolus.
 
 #include <LiquidCrystal.h>
-#include <LCDKeypad.h>
+//#include <LCDKeypad.h>
 
 /* -- Constants -- */
 #define SYRINGE_VOLUME_ML 140.0
@@ -253,13 +253,15 @@ void bolus(int direction){
         actualStepsPerSec += minStepsPerSec + accelSteps*t;
       }      
     
+      /*
       for(long i=0; i < steps; i++){ 
         digitalWrite(motorStepPin, HIGH); 
         delayMicroseconds(usDelay); 
     
         digitalWrite(motorStepPin, LOW); 
         delayMicroseconds(usDelay); 
-      } 
+      }
+      */
 
 }
 
