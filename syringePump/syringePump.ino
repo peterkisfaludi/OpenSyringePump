@@ -12,14 +12,15 @@
 #include <LCDKeypad.h>
 
 /* -- Constants -- */
-#define SYRINGE_VOLUME_ML 30.0
-#define SYRINGE_BARREL_LENGTH_MM 80.0
+#define SYRINGE_VOLUME_ML 140.0
+#define SYRINGE_BARREL_LENGTH_MM 123.44
 
 #define THREADED_ROD_PITCH 1.25
 #define STEPS_PER_REVOLUTION 200.0
 #define MICROSTEPS_PER_STEP 16.0
 
-#define SPEED_MICROSECONDS_DELAY 100 //longer delay = lower speed
+//#define SPEED_MICROSECONDS_DELAY 100 //longer delay = lower speed
+#define RAMP_UP_TIME 0.4 
 
 long ustepsPerMM = MICROSTEPS_PER_STEP * STEPS_PER_REVOLUTION / THREADED_ROD_PITCH;
 long ustepsPerML = (MICROSTEPS_PER_STEP * STEPS_PER_REVOLUTION * SYRINGE_BARREL_LENGTH_MM) / (SYRINGE_VOLUME_ML * THREADED_ROD_PITCH );
@@ -27,6 +28,11 @@ long ustepsPerML = (MICROSTEPS_PER_STEP * STEPS_PER_REVOLUTION * SYRINGE_BARREL_
 /* -- Pin definitions -- */
 int motorDirPin = 2;
 int motorStepPin = 3;
+
+//TODO: check netlist with Mike
+int motorMS1Pin = 4;
+int motorMS2Pin = 5;
+int motorMS3Pin = 6;
 
 int triggerPin = A3;
 int bigTriggerPin = A4;
@@ -76,6 +82,19 @@ boolean serialStrReady = false;
 /* -- Initialize libraries -- */
 LiquidCrystal lcd(8, 13, 9, 4, 5, 6, 7);
 
+//full stepping mode
+void setFullStepMode(){
+  digitalWrite(motorMS1Pin,LOW);
+  digitalWrite(motorMS2Pin,LOW);
+  digitalWrite(motorMS3Pin,LOW);
+}
+
+void set16uStepMode(){
+  digitalWrite(motorMS1Pin,HIGH);
+  digitalWrite(motorMS2Pin,HIGH);
+  digitalWrite(motorMS3Pin,HIGH);
+}
+
 void setup(){
   /* LCD setup */  
   lcd.begin(16, 2);
@@ -93,6 +112,12 @@ void setup(){
   pinMode(motorDirPin, OUTPUT);
   pinMode(motorStepPin, OUTPUT);
   
+  pinMode(motorMS1Pin, OUTPUT);
+  pinMode(motorMS2Pin, OUTPUT);
+  pinMode(motorMS3Pin, OUTPUT);
+  
+  setFullStepMode();
+    
   /* Serial setup */
   //Note that serial commands must be terminated with a newline
   //to be processed. Check this setting in your serial monitor if 
@@ -183,12 +208,11 @@ void bolus(int direction){
 	//change units to steps
 	long steps = (mLBolus * ustepsPerML);
 	if(direction == PUSH){
-                digitalWrite(motorDirPin, HIGH);
-		steps = mLBolus * ustepsPerML;
+        digitalWrite(motorDirPin, HIGH);
 		mLUsed += mLBolus;
 	}
 	else if(direction == PULL){
-                digitalWrite(motorDirPin, LOW);
+        digitalWrite(motorDirPin, LOW);
 		if((mLUsed-mLBolus) > 0){
 			mLUsed -= mLBolus;
 		}
@@ -196,8 +220,38 @@ void bolus(int direction){
 			mLUsed = 0;
 		}
 	}	
-
-      float usDelay = SPEED_MICROSECONDS_DELAY; //can go down to 20 or 30
+      
+      //TODO user provides max steps / sec parameter.  [min: 1400 steps/s; max: 7053 steps/s]
+      // for now, assume 7053 is max
+      
+      //v0 = 1400
+      float minStepsPerSec = 1400.0;
+      //v_end = 7053.0
+      float maxStepsPerSec = 7053.0;
+      
+      //enable microstepping
+      set16uStepMode();
+      
+      // a = (v_end - v0) / t
+      float accelSteps = (maxStepsPerSec - minStepsPerSec) / RAMP_UP_TIME;
+      
+      //v0 = 1400
+      float actualStepsPerSec = minStepsPerSec;
+      float t=0.0;
+      
+      //ramping up speed
+      while(actualStepsPerSec < maxStepsPerSec){
+        float usDelay = (1000000.0 / actualStepsPerSec)/2;
+        digitalWrite(motorStepPin, HIGH); 
+        delayMicroseconds(usDelay); 
+    
+        digitalWrite(motorStepPin, LOW); 
+        delayMicroseconds(usDelay);
+        
+        t += usDelay*2;
+        //v = v0 + a*t
+        actualStepsPerSec += minStepsPerSec + accelSteps*t;
+      }      
     
       for(long i=0; i < steps; i++){ 
         digitalWrite(motorStepPin, HIGH); 
