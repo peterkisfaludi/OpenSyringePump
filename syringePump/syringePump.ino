@@ -22,20 +22,20 @@ long ustepsPerMM = MICROSTEPS_PER_STEP * STEPS_PER_REVOLUTION / THREADED_ROD_PIT
 long ustepsPerML = (MICROSTEPS_PER_STEP * STEPS_PER_REVOLUTION * SYRINGE_BARREL_LENGTH_MM) / (SYRINGE_VOLUME_ML * THREADED_ROD_PITCH );
 
 /* -- Pin definitions -- */
-//TODO: check netlist with Mike
-int motorDirPin = 2;
-int motorStepPin = 3;
+int motorStepPin = 2;
+int motorDirPin = 3;
 
 int motorMS1Pin = 4;
 int motorMS2Pin = 5;
 int motorMS3Pin = 6;
+
+int motorEnablePin = 7;
 
 /* -- Enums and constants -- */
 enum {PUSH, PULL}; //syringe movement direction
 enum {MAIN, SPEED, VOLUME, SYMCYCLES, PREHEAT, RUN}; //UI states
 
 /* -- Default Parameters -- */
-//TODO min max values
 float mLUsed = 0.0;
 float mLBolus = 5.0; // pump volume
 const float minStepsPerSec = 1400.0;
@@ -72,6 +72,7 @@ void showMain() {
   Serial.println("3 - Select number of symmetrical cycles");
   Serial.println("4 - Select pre-heat time");
   Serial.println("5 - RUN");
+  Serial.println("6 - Show main menu");
 }
 
 // set full stepping mode
@@ -98,16 +99,16 @@ void setup() {
   pinMode(motorMS2Pin, OUTPUT);
   pinMode(motorMS3Pin, OUTPUT);
 
+  pinMode(motorEnablePin, OUTPUT);  
+
   setFullStepMode();
 
   /* Serial setup */
   //Note that serial commands must be terminated with a newline
   //to be processed. Check this setting in your serial monitor if
   //serial commands aren't doing anything.
-  Serial.begin(57600); //Note that your serial connection must be set to 57600 to work!
+  Serial.begin(9600); //Note that your serial connection must be set to 57600 to work!
 
-  //show main menu
-  showMain();
 }
 
 void loop() {
@@ -135,6 +136,7 @@ void readSerial() {
 
 //TODO update as per spec
 void processSerial() {
+      
   switch (uiState) {
     case MAIN:
     {
@@ -159,6 +161,11 @@ void processSerial() {
             Serial.println("Running...");
             break;
           }
+          case 6:
+          {
+            showMain();
+            break;
+          }
           default:
           {
             Serial.println("invalid choice");
@@ -173,6 +180,16 @@ void processSerial() {
 
     case SPEED:
     {
+      float tmp = serialStr.toFloat();
+      //TODO convert to steps per sec
+      if(tmp>minStepsPerSec && tmp<maxStepsPerSec){
+        stepsPerSec=tmp;
+      } else {
+        Serial.print("invalid number");
+      }
+      Serial.print("stepsPerSec = ");
+      Serial.println(stepsPerSec);
+      
       break;
     }
   }
