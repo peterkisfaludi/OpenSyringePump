@@ -176,31 +176,13 @@ void processSerial() {
 
 unsigned long mstimestart;
 unsigned long mstimeend;
-void turn(int direction,long usteps) {
+void turn(int direction, long usteps) {
   Serial.print("turn called with usteps=");
   Serial.print(usteps);
   Serial.print(" dir= ");
   Serial.print(direction);
   Serial.println("");
 
-  //test millis funtion
-  mstimestart = millis();
-  delay(400);
-  mstimeend=millis();
-  
-  Serial.print("time start= ");
-  Serial.print(mstimestart);
-  Serial.println("");
-
-  Serial.print("time elapsed= ");
-  Serial.print(mstimeend-mstimestart);
-  Serial.println("");
-  
-  Serial.print("time end= ");
-  Serial.print(mstimeend);
-  Serial.println("");
-  
-  
   if (direction == PUSH) {
     digitalWrite(motorDirPin, HIGH);
   }
@@ -208,35 +190,37 @@ void turn(int direction,long usteps) {
     digitalWrite(motorDirPin, LOW);
   }
 
-  float minUstepsPerSec =  minStepsPerSec* MICROSTEPS_PER_STEP;
-  float maxUstepsPerSec =  maxStepsPerSec* MICROSTEPS_PER_STEP;
+  float minUstepsPerSec =  minStepsPerSec * MICROSTEPS_PER_STEP;
+  float maxUstepsPerSec =  maxStepsPerSec * MICROSTEPS_PER_STEP;
 
   // a = (v_end - v0) / t
   float accelUsteps = (maxUstepsPerSec - minUstepsPerSec) / RAMP_UP_TIME_SEC;
 
   //v0 = 1400
   float actualUstepsPerSec = minUstepsPerSec;
-  float t = 0.0;
+  float usT = 0.0;
 
   float usDelay;
   //ramping up speed
   Serial.print("ramping up speed");
-  Serial.println(""); 
+  Serial.println("");
 
+  mstimestart = millis();
   while ( (actualUstepsPerSec < maxUstepsPerSec) && (usteps > 0L) ) {
     usteps--;
+    // 1/actualsteps/2
     usDelay = (1000000.0 / actualUstepsPerSec) / 2.0;
-    
+
     digitalWrite(motorStepPin, HIGH);
     delayMicroseconds(usDelay);
 
     digitalWrite(motorStepPin, LOW);
     delayMicroseconds(usDelay);
 
-    t += (usDelay * 2.0) / 1000000.0;
+    usT += (usDelay * 2.0);
 
     //v = v0 + a*t
-    actualUstepsPerSec = minUstepsPerSec + accelUsteps * t;
+    actualUstepsPerSec = minUstepsPerSec + accelUsteps * (usT / 1000000.0);
     if (actualUstepsPerSec > maxUstepsPerSec) {
       actualUstepsPerSec = maxUstepsPerSec;
     }
@@ -244,28 +228,42 @@ void turn(int direction,long usteps) {
     /*
     Serial.print(" usDelay= ");
     Serial.print(usDelay);
-    Serial.println("");  
-    Serial.print("t[ms] = ");
-    Serial.print(t*1000000.0);
+    Serial.println("");
+    Serial.print("t[us] = ");
+    Serial.print(usT);
     Serial.print(" actualUstepsPerSec = ");
     Serial.print(actualUstepsPerSec);
     Serial.print(" usteps remaining = ");
     Serial.print(usteps);
     Serial.println("");
     */
+    
   }
-   
-    Serial.print(" usDelay= ");
-    Serial.print(usDelay);
-    Serial.println("");  
-    Serial.print("t[ms] = ");
-    Serial.print(t*1000000.0);
-    Serial.print(" actualUstepsPerSec = ");
-    Serial.print(actualUstepsPerSec);
-    Serial.print(" usteps remaining = ");
-    Serial.print(usteps);
-    Serial.println("");
-   
+  //timing statistics
+  mstimeend = millis();
+  Serial.print("time start [ms]= ");
+  Serial.print(mstimestart);
+  Serial.println("");
+
+  Serial.print("time elapsed [ms]= ");
+  Serial.print(mstimeend - mstimestart);
+  Serial.println("");
+
+  Serial.print("time end [ms]= ");
+  Serial.print(mstimeend);
+  Serial.println("");
+
+  Serial.print(" usDelay= ");
+  Serial.print(usDelay);
+  Serial.println("");
+  Serial.print("t [s] = ");
+  Serial.print(usT / 1000000.0);
+  Serial.print(" actualUstepsPerSec = ");
+  Serial.print(actualUstepsPerSec);
+  Serial.print(" usteps remaining = ");
+  Serial.print(usteps);
+  Serial.println("");
+
 
   // keep max speed till end (only if there are steps left
   Serial.println("holding speed");
