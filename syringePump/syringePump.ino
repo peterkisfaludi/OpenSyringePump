@@ -14,12 +14,12 @@
 #define THREADED_ROD_PITCH 1.25
 #define STEPS_PER_REVOLUTION 200.0
 #define MICROSTEPS_PER_STEP 16.0
+#define MICROSTEPS_PER_REVOLUTION (STEPS_PER_REVOLUTION * MICROSTEPS_PER_STEP)
 
-//#define SPEED_MICROSECONDS_DELAY 100 //longer delay = lower speed
-#define RAMP_UP_TIME 0.4
+#define RAMP_UP_TIME_SEC 0.4
 
-long ustepsPerMM = MICROSTEPS_PER_STEP * STEPS_PER_REVOLUTION / THREADED_ROD_PITCH;
-long ustepsPerML = (MICROSTEPS_PER_STEP * STEPS_PER_REVOLUTION * SYRINGE_BARREL_LENGTH_MM) / (SYRINGE_VOLUME_ML * THREADED_ROD_PITCH );
+long ustepsPerMM = MICROSTEPS_PER_REVOLUTION / THREADED_ROD_PITCH;
+long ustepsPerML = (MICROSTEPS_PER_REVOLUTION * SYRINGE_BARREL_LENGTH_MM) / (SYRINGE_VOLUME_ML * THREADED_ROD_PITCH );
 
 /* -- Pin definitions -- */
 int motorStepPin = 2;
@@ -37,7 +37,9 @@ enum {MAIN, SPEED, VOLUME, SYMCYCLES, PREHEAT, RUN}; //UI states
 
 /* -- Default Parameters -- */
 float mLUsed = 0.0;
-float mLBolus = 5.0; // pump volume
+
+float mLBolus = 10.0; // pump volume
+
 const float minStepsPerSec = 1400.0;
 const float maxStepsPerSec = 7053.0;
 float stepsPerSec = minStepsPerSec;
@@ -99,9 +101,9 @@ void setup() {
   pinMode(motorMS2Pin, OUTPUT);
   pinMode(motorMS3Pin, OUTPUT);
 
-  pinMode(motorEnablePin, OUTPUT);  
+  pinMode(motorEnablePin, OUTPUT);
 
-  setFullStepMode();
+  set16uStepMode();
 
   /* Serial setup */
   //Note that serial commands must be terminated with a newline
@@ -134,148 +136,150 @@ void readSerial() {
   }
 }
 
-//TODO update as per spec
+void showParams() {
+  Serial.println("current parameters");
+  Serial.print("Bolus [mL] = ");
+  Serial.println(mLBolus);
+  Serial.print("Bolus [mL] = ");
+  Serial.println(mLBolus);
+}
+
+
 void processSerial() {
-      
-  switch (uiState) {
-    case MAIN:
-    {
-      int choice = serialStr.toInt();
-      if (choice != 0) {
-        switch (choice) {
-          case 1:
-          {
-            uiState = SPEED;
-            Serial.println("Enter desired pump speed");
-            break;
-          }
-          case 2:
-          {
-            uiState = VOLUME;
-            Serial.println("Enter desired pump volume");
-            break;
-          }
-          case 5:
-          {
-            uiState = RUN;
-            Serial.println("Running...");
-            break;
-          }
-          case 6:
-          {
-            showMain();
-            break;
-          }
-          default:
-          {
-            Serial.println("invalid choice");
-            break;
-          }
-        }
-      } else {
-        Serial.println("invalid choice");
-      }
-      break;
-    }
+  //process serial commands as they are read in
 
-    case SPEED:
-    {
-      float tmp = serialStr.toFloat();
-      //TODO convert to steps per sec
-      if(tmp>minStepsPerSec && tmp<maxStepsPerSec){
-        stepsPerSec=tmp;
-      } else {
-        Serial.print("invalid number");
-      }
-      Serial.print("stepsPerSec = ");
-      Serial.println(stepsPerSec);
-      
-      break;
-    }
+  static long usteps = 0;
+
+  if (serialStr.equals("+")) {
+    Serial.print("pushing by ");
+    Serial.print(usteps);
+    Serial.print(" usteps");
+    Serial.println("");
+    turn(PUSH, usteps);
+  }
+  else if (serialStr.equals("-")) {
+    turn(PULL, usteps);
+  }
+  else if (serialStr.toInt() != 0) {
+    usteps = serialStr.toInt();
+    Serial.print("usteps=");
+    Serial.print(usteps);
+    Serial.println("");
+  }
+  else {
+    Serial.println("Invalid command");
   }
 
-  /*
-  if (serialStr.equals("-")) {
-    bolus(PULL);
-  }
-  */
   serialStrReady = false;
   serialStr = "";
 }
 
-void bolus(int direction) {
-  //Move stepper. Will not return until stepper is done moving.
+unsigned long mstimestart;
+unsigned long mstimeend;
+void turn(int direction,long usteps) {
+  Serial.print("turn called with usteps=");
+  Serial.print(usteps);
+  Serial.print(" dir= ");
+  Serial.print(direction);
+  Serial.println("");
 
-  //change units to steps
-  long steps = (mLBolus * ustepsPerML);
+  //test millis funtion
+  mstimestart = millis();
+  delay(400);
+  mstimeend=millis();
+  
+  Serial.print("time start= ");
+  Serial.print(mstimestart);
+  Serial.println("");
+
+  Serial.print("time elapsed= ");
+  Serial.print(mstimeend-mstimestart);
+  Serial.println("");
+  
+  Serial.print("time end= ");
+  Serial.print(mstimeend);
+  Serial.println("");
+  
+  
   if (direction == PUSH) {
     digitalWrite(motorDirPin, HIGH);
-    mLUsed += mLBolus;
   }
   else if (direction == PULL) {
     digitalWrite(motorDirPin, LOW);
-    if ((mLUsed - mLBolus) > 0) {
-      mLUsed -= mLBolus;
-    }
-    else {
-      mLUsed = 0;
-    }
   }
 
-  //TODO user provides max steps / sec parameter.  [min: 1400 steps/s; max: 7053 steps/s]
-  // for now, assume 7053 is max
-
-  //v0 = 1400
-  float minStepsPerSec = 1400.0;
-  //v_end = 7053.0
-  float maxStepsPerSec = 7053.0;
-
-  //enable microstepping
-  set16uStepMode();
+  float minUstepsPerSec =  minStepsPerSec* MICROSTEPS_PER_STEP;
+  float maxUstepsPerSec =  maxStepsPerSec* MICROSTEPS_PER_STEP;
 
   // a = (v_end - v0) / t
-  float accelSteps = (maxStepsPerSec - minStepsPerSec) / RAMP_UP_TIME;
+  float accelUsteps = (maxUstepsPerSec - minUstepsPerSec) / RAMP_UP_TIME_SEC;
 
   //v0 = 1400
-  float actualStepsPerSec = minStepsPerSec;
+  float actualUstepsPerSec = minUstepsPerSec;
   float t = 0.0;
 
+  float usDelay;
   //ramping up speed
-  while (actualStepsPerSec < maxStepsPerSec) {
-    float usDelay = (1000000.0 / actualStepsPerSec) / 2;
+  Serial.print("ramping up speed");
+  Serial.println(""); 
+
+  while ( (actualUstepsPerSec < maxUstepsPerSec) && (usteps > 0L) ) {
+    usteps--;
+    usDelay = (1000000.0 / actualUstepsPerSec) / 2.0;
+    
     digitalWrite(motorStepPin, HIGH);
     delayMicroseconds(usDelay);
 
     digitalWrite(motorStepPin, LOW);
     delayMicroseconds(usDelay);
 
-    t += usDelay * 2;
+    t += (usDelay * 2.0) / 1000000.0;
+
     //v = v0 + a*t
-    actualStepsPerSec += minStepsPerSec + accelSteps * t;
-  }
+    actualUstepsPerSec = minUstepsPerSec + accelUsteps * t;
+    if (actualUstepsPerSec > maxUstepsPerSec) {
+      actualUstepsPerSec = maxUstepsPerSec;
+    }
 
-  //TODO keep speed
-  /*
-  for(long i=0; i < steps; i++){
+    /*
+    Serial.print(" usDelay= ");
+    Serial.print(usDelay);
+    Serial.println("");  
+    Serial.print("t[ms] = ");
+    Serial.print(t*1000000.0);
+    Serial.print(" actualUstepsPerSec = ");
+    Serial.print(actualUstepsPerSec);
+    Serial.print(" usteps remaining = ");
+    Serial.print(usteps);
+    Serial.println("");
+    */
+  }
+   
+    Serial.print(" usDelay= ");
+    Serial.print(usDelay);
+    Serial.println("");  
+    Serial.print("t[ms] = ");
+    Serial.print(t*1000000.0);
+    Serial.print(" actualUstepsPerSec = ");
+    Serial.print(actualUstepsPerSec);
+    Serial.print(" usteps remaining = ");
+    Serial.print(usteps);
+    Serial.println("");
+   
+
+  // keep max speed till end (only if there are steps left
+  Serial.println("holding speed");
+  usDelay = (1000000.0 / maxUstepsPerSec) / 2.0;
+  while (usteps > 0) {
+    Serial.print(" usteps remaining = ");
+    Serial.print(usteps);
+    Serial.println("");
+
+    usteps--;
     digitalWrite(motorStepPin, HIGH);
     delayMicroseconds(usDelay);
 
     digitalWrite(motorStepPin, LOW);
     delayMicroseconds(usDelay);
   }
-  */
-}
-
-String decToString(float decNumber) {
-  //not a general use converter! Just good for the numbers we're working with here.
-  int wholePart = decNumber; //truncate
-  int decPart = round(abs(decNumber * 1000) - abs(wholePart * 1000)); //3 decimal places
-  String strZeros = String("");
-  if (decPart < 10) {
-    strZeros = String("00");
-  }
-  else if (decPart < 100) {
-    strZeros = String("0");
-  }
-  return String(wholePart) + String('.') + strZeros + String(decPart);
 }
