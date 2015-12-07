@@ -212,7 +212,7 @@ void turn(int direction, long usteps) {
     usDelay = (1000000.0 / actualUstepsPerSec) / 2.0;
 
     digitalWrite(motorStepPin, HIGH);
-    delayMicroseconds(usDelay);
+    delayMicroseconds(usDelay+0.5); //rounding
 
     digitalWrite(motorStepPin, LOW);
     delayMicroseconds(usDelay);
