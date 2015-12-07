@@ -176,6 +176,11 @@ void processSerial() {
 
 unsigned long mstimestart;
 unsigned long mstimeend;
+
+void bolus(int direction){
+    turn(direction, ustepsPerML * mLBolus);
+}
+
 void turn(int direction, long usteps) {
   Serial.print("turn called with usteps=");
   Serial.print(usteps);
