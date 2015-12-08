@@ -2,10 +2,7 @@
 // Accepts triggers and serial commands.
 
 // Serial commands:
-// Set serial baud rate to 57600 and terminate commands with newlines.
-// Send a number, e.g. "100", to set bolus size.
-// Send a "+" to push that size bolus.
-// Send a "-" to pull that size bolus.
+// Set serial baud rate to 9600 and terminate commands with newlines.
 
 /* -- Constants -- */
 #define SYRINGE_VOLUME_ML 140.0
@@ -15,7 +12,6 @@
 #define STEPS_PER_REVOLUTION 200.0
 #define MICROSTEPS_PER_STEP 16.0
 
-//#define SPEED_MICROSECONDS_DELAY 100 //longer delay = lower speed
 #define RAMP_UP_TIME 0.4
 
 long ustepsPerMM = MICROSTEPS_PER_STEP * STEPS_PER_REVOLUTION / THREADED_ROD_PITCH;
@@ -75,40 +71,10 @@ void showMain() {
   Serial.println("6 - Show main menu");
 }
 
-// set full stepping mode
-void setFullStepMode() {
-  digitalWrite(motorMS1Pin, LOW);
-  digitalWrite(motorMS2Pin, LOW);
-  digitalWrite(motorMS3Pin, LOW);
-}
-
-// set 1/16 microstepping mode
-void set16uStepMode() {
-  digitalWrite(motorMS1Pin, HIGH);
-  digitalWrite(motorMS2Pin, HIGH);
-  digitalWrite(motorMS3Pin, HIGH);
-}
-
 void setup() {
 
-  /* Motor Setup */
-  pinMode(motorDirPin, OUTPUT);
-  pinMode(motorStepPin, OUTPUT);
-
-  pinMode(motorMS1Pin, OUTPUT);
-  pinMode(motorMS2Pin, OUTPUT);
-  pinMode(motorMS3Pin, OUTPUT);
-
-  pinMode(motorEnablePin, OUTPUT);  
-
-  setFullStepMode();
-
-  /* Serial setup */
-  //Note that serial commands must be terminated with a newline
-  //to be processed. Check this setting in your serial monitor if
-  //serial commands aren't doing anything.
-  Serial.begin(9600); //Note that your serial connection must be set to 57600 to work!
-
+  Serial.begin(9600); //Note that your serial connection must be set to 9600 to work!
+  showMain();
 }
 
 void loop() {
@@ -134,148 +100,145 @@ void readSerial() {
   }
 }
 
-//TODO update as per spec
 void processSerial() {
-      
+
   switch (uiState) {
     case MAIN:
-    {
-      int choice = serialStr.toInt();
-      if (choice != 0) {
-        switch (choice) {
-          case 1:
-          {
-            uiState = SPEED;
-            Serial.println("Enter desired pump speed");
-            break;
+      {
+        int choice = serialStr.toInt();
+        if (choice != 0) {
+          switch (choice) {
+            case 1:
+              {
+                uiState = SPEED;
+                Serial.println("Enter desired pump speed");
+                break;
+              }
+            case 2:
+              {
+                uiState = VOLUME;
+                Serial.println("Enter desired pump volume");
+                break;
+              }
+            case 3:
+              {
+                uiState = SYMCYCLES;
+                Serial.println("Enter desired symmetrical cycles");
+                break;
+              }
+            case 4:
+              {
+                uiState = PREHEAT;
+                Serial.println("Enter desired preheat time");
+                break;
+              }
+            case 5:
+              {
+                uiState = RUN;
+                processSerial();
+                break;
+              }
+            case 6:
+              {
+                showMain();
+                break;
+              }
+            default:
+              {
+                Serial.println("invalid choice");
+                break;
+              }
           }
-          case 2:
-          {
-            uiState = VOLUME;
-            Serial.println("Enter desired pump volume");
-            break;
-          }
-          case 5:
-          {
-            uiState = RUN;
-            Serial.println("Running...");
-            break;
-          }
-          case 6:
-          {
-            showMain();
-            break;
-          }
-          default:
-          {
-            Serial.println("invalid choice");
-            break;
-          }
+        } else {
+          Serial.println("invalid choice");
         }
-      } else {
-        Serial.println("invalid choice");
+        break;
       }
-      break;
-    }
 
     case SPEED:
-    {
-      float tmp = serialStr.toFloat();
-      //TODO convert to steps per sec
-      if(tmp>minStepsPerSec && tmp<maxStepsPerSec){
-        stepsPerSec=tmp;
-      } else {
-        Serial.print("invalid number");
+      {
+        float tmp = serialStr.toFloat();
+        if (tmp >= minStepsPerSec && tmp <= maxStepsPerSec) {
+          stepsPerSec = tmp;
+          //TODO change motor speed
+        } else {
+          Serial.println("invalid number");
+        }
+        Serial.print("stepsPerSec = ");
+        Serial.println(stepsPerSec);
+        uiState = MAIN;
+        showMain();
+        break;
       }
-      Serial.print("stepsPerSec = ");
-      Serial.println(stepsPerSec);
+
+    case VOLUME:
+      {
+        float tmp = serialStr.toFloat();
+        if (tmp > 0.0) {
+          mLBolus = tmp;
+        } else {
+          Serial.println("invalid number");
+        }
+        Serial.print("mLBolus = ");
+        Serial.println(mLBolus);
+        uiState = MAIN;
+        showMain();
+        break;
+      }
+
+    case SYMCYCLES:
+      {
+        int tmp = serialStr.toInt();
+        if (tmp > 0) {
+          symcycles = tmp;
+        } else {
+          Serial.println("invalid number");
+        }
+        Serial.print("symcycles = ");
+        Serial.println(symcycles);
+        uiState = MAIN;
+        showMain();
+        break;
+      }
+
+    case PREHEAT:
+      {
+        float tmp = serialStr.toFloat();
+        if (tmp > 0.0) {
+          preHeatTimeSec = tmp;
+        } else {
+          Serial.println("invalid number");
+        }
+        Serial.print("preHeatTimeSec = ");
+        Serial.println(preHeatTimeSec);
+        uiState = MAIN;
+        showMain();
+        break;
+      }
       
-      break;
-    }
+    case RUN:
+      {
+        //TODO do full cycle as per spec:
+        /*
+         * Relay 1 on, relay 3 on
+         * WITHDRAW
+         * Relay 3 off, relay 1 off, relay 2 on
+         * INFUSE
+         * PAUSE 1 sec
+         * Relay 2 off
+         *
+         */
+
+        unsigned long usteps = mLBolus * ustepsPerML;
+        //TODO position motor based on usteps
+        Serial.println("run start");
+        Serial.println("run end");
+        uiState = MAIN;
+        showMain();
+        break;
+      }
   }
 
-  /*
-  if (serialStr.equals("-")) {
-    bolus(PULL);
-  }
-  */
   serialStrReady = false;
   serialStr = "";
-}
-
-void bolus(int direction) {
-  //Move stepper. Will not return until stepper is done moving.
-
-  //change units to steps
-  long steps = (mLBolus * ustepsPerML);
-  if (direction == PUSH) {
-    digitalWrite(motorDirPin, HIGH);
-    mLUsed += mLBolus;
-  }
-  else if (direction == PULL) {
-    digitalWrite(motorDirPin, LOW);
-    if ((mLUsed - mLBolus) > 0) {
-      mLUsed -= mLBolus;
-    }
-    else {
-      mLUsed = 0;
-    }
-  }
-
-  //TODO user provides max steps / sec parameter.  [min: 1400 steps/s; max: 7053 steps/s]
-  // for now, assume 7053 is max
-
-  //v0 = 1400
-  float minStepsPerSec = 1400.0;
-  //v_end = 7053.0
-  float maxStepsPerSec = 7053.0;
-
-  //enable microstepping
-  set16uStepMode();
-
-  // a = (v_end - v0) / t
-  float accelSteps = (maxStepsPerSec - minStepsPerSec) / RAMP_UP_TIME;
-
-  //v0 = 1400
-  float actualStepsPerSec = minStepsPerSec;
-  float t = 0.0;
-
-  //ramping up speed
-  while (actualStepsPerSec < maxStepsPerSec) {
-    float usDelay = (1000000.0 / actualStepsPerSec) / 2;
-    digitalWrite(motorStepPin, HIGH);
-    delayMicroseconds(usDelay);
-
-    digitalWrite(motorStepPin, LOW);
-    delayMicroseconds(usDelay);
-
-    t += usDelay * 2;
-    //v = v0 + a*t
-    actualStepsPerSec += minStepsPerSec + accelSteps * t;
-  }
-
-  //TODO keep speed
-  /*
-  for(long i=0; i < steps; i++){
-    digitalWrite(motorStepPin, HIGH);
-    delayMicroseconds(usDelay);
-
-    digitalWrite(motorStepPin, LOW);
-    delayMicroseconds(usDelay);
-  }
-  */
-}
-
-String decToString(float decNumber) {
-  //not a general use converter! Just good for the numbers we're working with here.
-  int wholePart = decNumber; //truncate
-  int decPart = round(abs(decNumber * 1000) - abs(wholePart * 1000)); //3 decimal places
-  String strZeros = String("");
-  if (decPart < 10) {
-    strZeros = String("00");
-  }
-  else if (decPart < 100) {
-    strZeros = String("0");
-  }
-  return String(wholePart) + String('.') + strZeros + String(decPart);
 }
