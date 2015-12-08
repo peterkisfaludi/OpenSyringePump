@@ -21,11 +21,9 @@ long ustepsPerML = (MICROSTEPS_PER_STEP * STEPS_PER_REVOLUTION * SYRINGE_BARREL_
 int motorStepPin = 2;
 int motorDirPin = 3;
 
-int motorMS1Pin = 4;
-int motorMS2Pin = 5;
-int motorMS3Pin = 6;
-
-int motorEnablePin = 7;
+int relay1Pin = 22;
+int relay2Pin = 23;
+int relay3Pin = 24;
 
 /* -- Enums and constants -- */
 enum {PUSH, PULL}; //syringe movement direction
@@ -33,14 +31,15 @@ enum {MAIN, SPEED, VOLUME, SYMCYCLES, PREHEAT, RUN}; //UI states
 
 /* -- Default Parameters -- */
 float mLUsed = 0.0;
-float mLBolus = 5.0; // pump volume
-const float minStepsPerSec = 1400.0;
-const float maxStepsPerSec = 7053.0;
-float stepsPerSec = minStepsPerSec;
-long symcycles = 1;
-float preHeatTimeSec = 1.0;
 
-long stepperPos = 0; //in microsteps
+const float minMlBolus = 10.0;
+const float maxMlBolus = 120.0;
+float mLBolus = minMlBolus; // pump volume
+const float minuStepsPerSec = 1400.0 * MICROSTEPS_PER_STEP;
+const float maxuStepsPerSec = 7053.0 * MICROSTEPS_PER_STEP;
+float ustepsPerSec = minuStepsPerSec;
+int symcycles = 1;
+float preHeatTimeSec = 1.0;
 
 //menu stuff
 int uiState = MAIN;
@@ -63,10 +62,10 @@ note: pump volume is directly related to total number of stepper motor steps (# 
 */
 void showMain() {
   Serial.println("Main menu, choose an option from below:");
-  Serial.println("1 - Select pump speed");
-  Serial.println("2 - Select pump volume");
-  Serial.println("3 - Select number of symmetrical cycles");
-  Serial.println("4 - Select pre-heat time");
+  Serial.println("1 - Select pump speed [mL/sec]");
+  Serial.println("2 - Select pump volume [mL]");
+  Serial.println("3 - Select number of symmetrical cycles [positive integer]");
+  Serial.println("4 - Select pre-heat time [seconds]");
   Serial.println("5 - RUN");
   Serial.println("6 - Show main menu");
 }
@@ -84,6 +83,51 @@ void loop() {
   if (serialStrReady) {
     processSerial();
   }
+}
+
+enum {ON, OFF};
+void relayControl(int relayNum, int onoff) {
+  int relayPin;
+  int highlow;
+
+  switch (relayNum) {
+    case 1:
+      {
+        relayPin = relay1Pin;
+        break;
+      }
+    case 2:
+      {
+        relayPin = relay2Pin;
+        break;
+      }
+    case 3:
+      {
+        relayPin = relay3Pin;
+        break;
+      }
+    default:
+      {
+        return;
+      }
+  }
+
+  switch (onoff) {
+    case ON:
+      {
+        highlow = HIGH;
+        break;
+      }
+    case OFF:
+      {
+        highlow = LOW;
+        break;
+      }
+    default:
+      return;
+  }
+
+  digitalWrite(relayPin, onoff);
 }
 
 void readSerial() {
@@ -111,25 +155,25 @@ void processSerial() {
             case 1:
               {
                 uiState = SPEED;
-                Serial.println("Enter desired pump speed");
+                Serial.println("Enter desired pump speed [mL / sec]");
                 break;
               }
             case 2:
               {
                 uiState = VOLUME;
-                Serial.println("Enter desired pump volume");
+                Serial.println("Enter desired pump volume [mL]");
                 break;
               }
             case 3:
               {
                 uiState = SYMCYCLES;
-                Serial.println("Enter desired symmetrical cycles");
+                Serial.println("Enter desired symmetrical cycles [poitive integer]");
                 break;
               }
             case 4:
               {
                 uiState = PREHEAT;
-                Serial.println("Enter desired preheat time");
+                Serial.println("Enter desired preheat time [seconds]");
                 break;
               }
             case 5:
@@ -157,15 +201,14 @@ void processSerial() {
 
     case SPEED:
       {
-        float tmp = serialStr.toFloat();
-        if (tmp >= minStepsPerSec && tmp <= maxStepsPerSec) {
-          stepsPerSec = tmp;
-          //TODO change motor speed
+        float tmp = ustepsPerML * serialStr.toFloat();
+        if (tmp >= minuStepsPerSec && tmp <= maxuStepsPerSec) {
+          ustepsPerSec = tmp;          
         } else {
           Serial.println("invalid number");
         }
-        Serial.print("stepsPerSec = ");
-        Serial.println(stepsPerSec);
+        Serial.print("ustepsPerSec = ");
+        Serial.println(ustepsPerSec);
         uiState = MAIN;
         showMain();
         break;
@@ -174,7 +217,7 @@ void processSerial() {
     case VOLUME:
       {
         float tmp = serialStr.toFloat();
-        if (tmp > 0.0) {
+        if (tmp >= minMlBolus && tmp <= maxMlBolus) {
           mLBolus = tmp;
         } else {
           Serial.println("invalid number");
@@ -215,24 +258,57 @@ void processSerial() {
         showMain();
         break;
       }
-      
+
     case RUN:
       {
-        //TODO do full cycle as per spec:
-        /*
-         * Relay 1 on, relay 3 on
-         * WITHDRAW
-         * Relay 3 off, relay 1 off, relay 2 on
-         * INFUSE
-         * PAUSE 1 sec
-         * Relay 2 off
-         *
-         */
+        //TODO change motor speed to ustepsPerSec      
 
+        // TODO tell motor to take usteps number of steps
         unsigned long usteps = mLBolus * ustepsPerML;
-        //TODO position motor based on usteps
-        Serial.println("run start");
-        Serial.println("run end");
+        
+        for (unsigned long i = 0; i < symcycles; i++) {
+          Serial.print("Starting cycle ");
+          Serial.println(i+1);
+          //Start with all relays off
+          relayControl(1, OFF);
+          relayControl(2, OFF);
+          relayControl(3, OFF);
+
+          //Relay 1 turns on
+          relayControl(1, ON);
+
+          //Relay 3 turns on for selected pre-heat time
+          relayControl(3, ON);
+
+          //pre-heat
+          Serial.println("Preheat start ");
+          delay(1000.0 * preHeatTimeSec);
+
+          //WITHDRAW
+          Serial.println("WITHDRAW start ");
+          
+          //TODO do withdraw
+
+          //Relay 3 turns off as soon as the stepper stops moving.
+          relayControl(3, OFF);
+
+          //Relay 1 turns off.
+          relayControl(1, OFF);
+
+          //Relay 2 turns on.
+          relayControl(2, ON);
+
+          //INFUSE
+          Serial.println("INFUSE start");
+          //TODO do infuse
+
+          //Pause for 1 second.
+          delay(1000);
+
+          //Relay 2 turns off.
+          relayControl(2, OFF);
+        }
+
         uiState = MAIN;
         showMain();
         break;
@@ -242,3 +318,4 @@ void processSerial() {
   serialStrReady = false;
   serialStr = "";
 }
+
