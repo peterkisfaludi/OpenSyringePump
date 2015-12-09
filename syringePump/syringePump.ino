@@ -13,69 +13,71 @@
 
 #define THREADED_ROD_PITCH 1.25
 #define STEPS_PER_REVOLUTION 200.0
-#define MICROSTEPS_PER_STEP 16.0
-#define MICROSTEPS_PER_REVOLUTION (STEPS_PER_REVOLUTION * MICROSTEPS_PER_STEP)
 
 #define RAMP_UP_TIME_SEC 0.4
 
-unsigned long ustepsPerMM = MICROSTEPS_PER_REVOLUTION / THREADED_ROD_PITCH;
-unsigned long ustepsPerML = (MICROSTEPS_PER_REVOLUTION * SYRINGE_BARREL_LENGTH_MM) / (SYRINGE_VOLUME_ML * THREADED_ROD_PITCH );
+unsigned long stepsPerML = (STEPS_PER_REVOLUTION * SYRINGE_BARREL_LENGTH_MM) / (SYRINGE_VOLUME_ML * THREADED_ROD_PITCH );
 
 /* -- Pin definitions -- */
 int motorStepPin = 2;
 int motorDirPin = 3;
-AccelStepper stepper(1, motorStepPin, motorDirPin);
 
-/* -- Enums and constants -- */
-enum {PUSH, PULL}; //syringe movement direction
-enum {MAIN, SPEED, VOLUME, SYMCYCLES, PREHEAT, RUN}; //UI states
+int motorMS1Pin = 4;
+int motorMS2Pin = 5;
+int motorMS3Pin = 6;
+
+AccelStepper stepper(1, motorStepPin, motorDirPin);
 
 /* -- Default Parameters -- */
 float mLUsed = 0.0;
 
 float mLBolus = 10.0; // pump volume
 
-const float minUstepsPerSec = 1400.0 * MICROSTEPS_PER_STEP;
-const float maxUstepsPerSec = 7053.0 * MICROSTEPS_PER_STEP;
-float reqUstepsPerSec = maxUstepsPerSec;
-const float motorAccel = (maxUstepsPerSec - minUstepsPerSec) / RAMP_UP_TIME_SEC;
+const float minStepsPerSec = 1400.0;
+const float maxStepsPerSec = 7053.0;
+float reqStepsPerSec = maxStepsPerSec;
+const float motorAccel = (maxStepsPerSec - minStepsPerSec) / RAMP_UP_TIME_SEC;
 
 //serial
 String serialStr = "";
 boolean serialStrReady = false;
 
+// set full stepping mode
+void setFullStepMode() {
+  digitalWrite(motorMS1Pin, LOW);
+  digitalWrite(motorMS2Pin, LOW);
+  digitalWrite(motorMS3Pin, LOW);
+}
+
 void setup() {
 
   /* Motor Setup */
-  pinMode(motorDirPin, OUTPUT);
   pinMode(motorStepPin, OUTPUT);
+  pinMode(motorDirPin, OUTPUT);
+
+  pinMode(motorMS1Pin, OUTPUT);
+  pinMode(motorMS2Pin, OUTPUT);
+  pinMode(motorMS3Pin, OUTPUT);
+
+  setFullStepMode();
+
+  stepper.setMaxSpeed(reqStepsPerSec);
+  stepper.setAcceleration(motorAccel);
 
   /* Serial setup */
   //Note that serial commands must be terminated with a newline
   //to be processed. Check this setting in your serial monitor if
   //serial commands aren't doing anything.
-  Serial.begin(9600); //Note that your serial connection must be set to 57600 to work!
-  delay(5000);
+  Serial.begin(9600);
 
-  Serial.print("minUstepsPerSec=");
-  Serial.print(minUstepsPerSec);
-  Serial.println("");
-
-  Serial.print("maxUstepsPerSec=");
-  Serial.print(maxUstepsPerSec);
-  Serial.println("");
-
-  Serial.print("reqUstepsPerSec=");
-  Serial.print(reqUstepsPerSec);
+  Serial.print("reqStepsPerSec=");
+  Serial.print(reqStepsPerSec);
   Serial.println("");
 
   Serial.print("motorAccel=");
   Serial.print(motorAccel);
   Serial.println("");
 
-  stepper.setMaxSpeed(maxUstepsPerSec);
-  stepper.setSpeed(reqUstepsPerSec);
-  stepper.setAcceleration(motorAccel);
 }
 
 void loop() {
@@ -104,19 +106,16 @@ void readSerial() {
 void processSerial() {
   //process serial commands as they are read in
 
-  static long posUsteps = 0;
+  static long posSteps = 0;
 
   if (serialStr.equals("+")) {
-    goTo(posUsteps);
-  }
-  else if (serialStr.toInt() != 0) {
-    posUsteps = serialStr.toInt();
-    Serial.print("posUsteps=");
-    Serial.print(posUsteps);
-    Serial.println("");
+    goTo(posSteps);
   }
   else {
-    Serial.println("Invalid command");
+    posSteps = serialStr.toInt();
+    Serial.print("posSteps=");
+    Serial.print(posSteps);
+    Serial.println("");
   }
 
   serialStrReady = false;
@@ -126,17 +125,12 @@ void processSerial() {
 unsigned long mstimestart;
 unsigned long mstimeend;
 
-void goTo(unsigned long posUsteps) {
-  Serial.print("go to position [usteps] =");
-  Serial.print(posUsteps);
+void goTo(long posSteps) {
+  Serial.print("go to position [steps] =");
+  Serial.print(posSteps);
   Serial.println("");
-
-  stepper.moveTo(posUsteps);
-
   mstimestart = micros();
-  while (stepper.distanceToGo() != 0) {
-    stepper.run();
-  }
+  stepper.runToNewPosition(posSteps);
   mstimeend = micros();
   Serial.println("stepper ready");
   Serial.print("time elapsed [us]= ");
