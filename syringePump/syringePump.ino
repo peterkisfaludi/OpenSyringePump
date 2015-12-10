@@ -1,8 +1,12 @@
-// Controls a stepper motor via an LCD keypad shield.
+// Controls a stepper motor via Serial.
 // Accepts triggers and serial commands.
 
 // Serial commands:
 // Set serial baud rate to 9600 and terminate commands with newlines.
+// Send a number, e.g. "100", to set desired position.
+// Send a "+" to go to that position.
+
+#include "AccelStepper.h"
 
 /* -- Constants -- */
 #define SYRINGE_VOLUME_ML 140.0
@@ -10,23 +14,26 @@
 
 #define THREADED_ROD_PITCH 1.25
 #define STEPS_PER_REVOLUTION 200.0
-#define MICROSTEPS_PER_STEP 16.0
 
-#define RAMP_UP_TIME 0.4
+#define RAMP_UP_TIME_SEC 0.4
 
-long ustepsPerMM = MICROSTEPS_PER_STEP * STEPS_PER_REVOLUTION / THREADED_ROD_PITCH;
-long ustepsPerML = (MICROSTEPS_PER_STEP * STEPS_PER_REVOLUTION * SYRINGE_BARREL_LENGTH_MM) / (SYRINGE_VOLUME_ML * THREADED_ROD_PITCH );
+unsigned long stepsPerML = (STEPS_PER_REVOLUTION * SYRINGE_BARREL_LENGTH_MM) / (SYRINGE_VOLUME_ML * THREADED_ROD_PITCH );
 
 /* -- Pin definitions -- */
 int motorStepPin = 2;
 int motorDirPin = 3;
+
+int motorMS1Pin = 4;
+int motorMS2Pin = 5;
+int motorMS3Pin = 6;
+
+AccelStepper stepper(1, motorStepPin, motorDirPin);
 
 int relay1Pin = 22;
 int relay2Pin = 23;
 int relay3Pin = 24;
 
 /* -- Enums and constants -- */
-enum {PUSH, PULL}; //syringe movement direction
 enum {MAIN, SPEED, VOLUME, SYMCYCLES, PREHEAT, RUN}; //UI states
 
 /* -- Default Parameters -- */
@@ -35,9 +42,11 @@ float mLUsed = 0.0;
 const float minMlBolus = 10.0;
 const float maxMlBolus = 120.0;
 float mLBolus = minMlBolus; // pump volume
-const float minuStepsPerSec = 1400.0 * MICROSTEPS_PER_STEP;
-const float maxuStepsPerSec = 7053.0 * MICROSTEPS_PER_STEP;
-float ustepsPerSec = minuStepsPerSec;
+
+const float minStepsPerSec = 1400.0;
+const float maxStepsPerSec = 7053.0;
+float reqStepsPerSec = maxStepsPerSec;
+const float motorAccel = (maxStepsPerSec - minStepsPerSec) / RAMP_UP_TIME_SEC;
 int symcycles = 1;
 float preHeatTimeSec = 1.0;
 
@@ -68,21 +77,6 @@ void showMain() {
   Serial.println("4 - Select pre-heat time [seconds]");
   Serial.println("5 - RUN");
   Serial.println("6 - Show main menu");
-}
-
-void setup() {
-
-  Serial.begin(9600); //Note that your serial connection must be set to 9600 to work!
-  showMain();
-}
-
-void loop() {
-
-  //check serial port for new commands
-  readSerial();
-  if (serialStrReady) {
-    processSerial();
-  }
 }
 
 enum {ON, OFF};
@@ -130,6 +124,62 @@ void relayControl(int relayNum, int onoff) {
   digitalWrite(relayPin, onoff);
 }
 
+// set full stepping mode
+void setFullStepMode() {
+  digitalWrite(motorMS1Pin, LOW);
+  digitalWrite(motorMS2Pin, LOW);
+  digitalWrite(motorMS3Pin, LOW);
+}
+
+void setup() {
+
+  /* Motor Setup */
+  pinMode(motorStepPin, OUTPUT);
+  pinMode(motorDirPin, OUTPUT);
+
+  pinMode(motorMS1Pin, OUTPUT);
+  pinMode(motorMS2Pin, OUTPUT);
+  pinMode(motorMS3Pin, OUTPUT);
+
+  setFullStepMode();
+
+  stepper.setMaxSpeed(reqStepsPerSec);
+  stepper.setAcceleration(motorAccel);
+
+  /* Serial setup */
+  //Note that serial commands must be terminated with a newline
+  //to be processed. Check this setting in your serial monitor if
+  //serial commands aren't doing anything.
+  Serial.begin(9600);
+
+  Serial.print("reqStepsPerSec=");
+  Serial.print(reqStepsPerSec);
+  Serial.println("");
+
+  Serial.print("motorAccel=");
+  Serial.print(motorAccel);
+  Serial.println("");
+
+  pinMode(relay1Pin, OUTPUT);
+  pinMode(relay2Pin, OUTPUT);
+  pinMode(relay3Pin, OUTPUT);
+
+  relayControl(1, OFF);
+  relayControl(2, OFF);
+  relayControl(3, OFF);
+
+  showMain();
+}
+
+void loop() {
+
+  //check serial port for new commands
+  readSerial();
+  if (serialStrReady) {
+    processSerial();
+  }
+}
+
 void readSerial() {
   //pulls in characters from serial port as they arrive
   //builds serialStr and sets ready flag when newline is found
@@ -144,7 +194,9 @@ void readSerial() {
   }
 }
 
+long posSteps = 0;
 void processSerial() {
+  //process serial commands as they are read in
 
   switch (uiState) {
     case MAIN:
@@ -167,7 +219,7 @@ void processSerial() {
             case 3:
               {
                 uiState = SYMCYCLES;
-                Serial.println("Enter desired symmetrical cycles [poitive integer]");
+                Serial.println("Enter desired symmetrical cycles [positive integer]");
                 break;
               }
             case 4:
@@ -201,14 +253,14 @@ void processSerial() {
 
     case SPEED:
       {
-        float tmp = ustepsPerML * serialStr.toFloat();
-        if (tmp >= minuStepsPerSec && tmp <= maxuStepsPerSec) {
-          ustepsPerSec = tmp;          
+        float tmp = stepsPerML * serialStr.toFloat();
+        if (tmp >= minStepsPerSec && tmp <= maxStepsPerSec) {
+          reqStepsPerSec = tmp;
         } else {
           Serial.println("invalid number");
         }
-        Serial.print("ustepsPerSec = ");
-        Serial.println(ustepsPerSec);
+        Serial.print("reqStepsPerSec = ");
+        Serial.println(reqStepsPerSec);
         uiState = MAIN;
         showMain();
         break;
@@ -261,14 +313,14 @@ void processSerial() {
 
     case RUN:
       {
-        //TODO change motor speed to ustepsPerSec      
+        //change motor speed to stepsPerSec
+        stepper.setMaxSpeed(reqStepsPerSec);
 
-        // TODO tell motor to take usteps number of steps
-        unsigned long usteps = mLBolus * ustepsPerML;
-        
-        for (unsigned long i = 0; i < symcycles; i++) {
+        long steps = mLBolus * stepsPerML;
+
+        for (int i = 0; i < symcycles; i++) {
           Serial.print("Starting cycle ");
-          Serial.println(i+1);
+          Serial.println(i + 1);
           //Start with all relays off
           relayControl(1, OFF);
           relayControl(2, OFF);
@@ -286,8 +338,10 @@ void processSerial() {
 
           //WITHDRAW
           Serial.println("WITHDRAW start ");
-          
+
           //TODO do withdraw
+          posSteps -= steps;
+          goTo(posSteps);
 
           //Relay 3 turns off as soon as the stepper stops moving.
           relayControl(3, OFF);
@@ -301,6 +355,8 @@ void processSerial() {
           //INFUSE
           Serial.println("INFUSE start");
           //TODO do infuse
+          posSteps += steps;
+          goTo(posSteps);
 
           //Pause for 1 second.
           delay(1000);
@@ -319,3 +375,18 @@ void processSerial() {
   serialStr = "";
 }
 
+unsigned long mstimestart;
+unsigned long mstimeend;
+
+void goTo(long posSteps) {
+  Serial.print("go to position [steps] =");
+  Serial.print(posSteps);
+  Serial.println("");
+  mstimestart = micros();
+  stepper.runToNewPosition(posSteps);
+  mstimeend = micros();
+  Serial.println("stepper ready");
+  Serial.print("time elapsed [us]= ");
+  Serial.print(mstimeend - mstimestart);
+  Serial.println("");
+}
